@@ -1,7 +1,7 @@
 import Foundation
 
 /// Finder 右键菜单展示模式。
-/// - flat: 已启用且当前可用的动作直接显示在一级菜单中，收藏置顶。
+/// - flat: 新建文件和实用工具固定使用子菜单，其他可用动作直接显示，收藏置顶。
 /// - grouped: 兼容旧版，按动作分类放入二级子菜单。
 public enum MenuLayoutMode: String, Codable, CaseIterable, Equatable, Identifiable {
     case flat
@@ -30,6 +30,7 @@ public enum FinderMenuLayoutBuilder {
     public static func build(
         actions: [MenuAction],
         mode: MenuLayoutMode,
+        configuration: MenuConfiguration? = nil,
         isEnabled: (MenuAction) -> Bool,
         isFavorite: (MenuAction) -> Bool,
         isAvailable: (MenuAction) -> Bool
@@ -38,17 +39,43 @@ public enum FinderMenuLayoutBuilder {
             isEnabled(action) && isAvailable(action)
         }
 
+        if let configuration {
+            let visible = Set(eligible.map(\.actionId))
+            return configuration.normalized(actions: actions).entries.compactMap { entry in
+                if let title = entry.title {
+                    let ids = entry.actionIDs.filter { visible.contains($0) }
+                    return ids.isEmpty ? nil : .submenu(title: title, actionIds: ids)
+                }
+                return visible.contains(entry.id) ? .directItems(actionIds: [entry.id]) : nil
+            }
+        }
+
+        let newFileOrder: [SupportedFileType] = [.txt, .pages, .key, .numbers, .docx, .xlsx, .pptx, .md, .json, .csv, .html, .pdf]
+        let newFiles = eligible.filter { $0.category == .newFile }.sorted {
+            let left = ($0 as? NewFileAction).flatMap { newFileOrder.firstIndex(of: $0.fileType) } ?? Int.max
+            let right = ($1 as? NewFileAction).flatMap { newFileOrder.firstIndex(of: $0.fileType) } ?? Int.max
+            return left == right ? $0.actionId < $1.actionId : left < right
+        }.map(\.actionId)
+        let utilities = eligible.filter { $0.category == .utility }.sortedForMenu()
+        let utilityIds = (utilities.filter(isFavorite) + utilities.filter { !isFavorite($0) }).map(\.actionId)
+        let suffix: [FinderMenuLayoutSection] = utilityIds.isEmpty ? [] : [
+            .submenu(title: "实用工具", actionIds: utilityIds)
+        ]
+        let remaining = eligible.filter { $0.category != .newFile && $0.category != .utility }
+        let prefix: [FinderMenuLayoutSection] = newFiles.isEmpty ? [] : [
+            .submenu(title: "新建文件", actionIds: newFiles)
+        ]
         switch mode {
         case .flat:
-            return buildFlatSections(
-                actions: eligible,
+            return prefix + buildFlatSections(
+                actions: remaining,
                 isFavorite: isFavorite
-            )
+            ) + suffix
         case .grouped:
-            return buildGroupedSections(
-                actions: eligible,
+            return prefix + buildGroupedSections(
+                actions: remaining,
                 isFavorite: isFavorite
-            )
+            ) + suffix
         }
     }
 

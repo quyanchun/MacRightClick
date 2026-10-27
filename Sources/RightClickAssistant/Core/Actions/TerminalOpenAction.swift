@@ -9,6 +9,8 @@ public enum TerminalEditorType: String, Codable, CaseIterable, Sendable {
     case vscode = "vscode"
     case sublime = "sublime"
     case cursor = "cursor"
+    case workbuddy = "workbuddy"
+    case codex = "codex"
     
     public var bundleIdentifier: String {
         switch self {
@@ -16,8 +18,10 @@ public enum TerminalEditorType: String, Codable, CaseIterable, Sendable {
         case .iterm2: return "com.googlecode.iterm2"
         case .warp: return "dev.warp.Warp-Stable"
         case .vscode: return "com.microsoft.VSCode"
-        case .sublime: return "com.sublimetext.3" // 支持 Sublime Text 3/4
+        case .sublime: return "com.sublimetext.4" // 注册表兼容 Sublime Text 3
         case .cursor: return "com.todesktop.230313mptvbe7of" // Cursor's custom bundle ID
+        case .workbuddy: return "com.tencent.workbuddy.mac"
+        case .codex: return "com.openai.codex"
         }
     }
     
@@ -29,6 +33,8 @@ public enum TerminalEditorType: String, Codable, CaseIterable, Sendable {
         case .vscode: return "Visual Studio Code"
         case .sublime: return "Sublime Text"
         case .cursor: return "Cursor"
+        case .workbuddy: return "WorkBuddy"
+        case .codex: return "Codex"
         }
     }
 }
@@ -50,7 +56,7 @@ public final class TerminalOpenAction: MenuAction, @unchecked Sendable {
     }
 
     public var isEnabledByDefault: Bool {
-        return tier == .essential
+        return tier == .essential || appType == .workbuddy || appType == .codex
     }
     
     public init(type: TerminalEditorType) {
@@ -65,6 +71,8 @@ public final class TerminalOpenAction: MenuAction, @unchecked Sendable {
         case .vscode: self.iconName = "chevron.left.forwardslash.chevron.right"
         case .sublime: self.iconName = "doc.plaintext"
         case .cursor: self.iconName = "sparkles"
+        case .workbuddy: self.iconName = "sparkles"
+        case .codex: self.iconName = "sparkles"
         }
     }
     
@@ -74,7 +82,7 @@ public final class TerminalOpenAction: MenuAction, @unchecked Sendable {
         guard InstalledAppRegistry.shared.isInstalled(appType.bundleIdentifier) else {
             return false
         }
-        return !targetURLs.isEmpty
+        return appType == .workbuddy || appType == .codex ? !urlsToOpen(for: targetURLs).isEmpty : !targetURLs.isEmpty
     }
     
     public func execute(targetURLs: [URL]) -> Bool {
@@ -85,16 +93,13 @@ public final class TerminalOpenAction: MenuAction, @unchecked Sendable {
         targetURLs: [URL],
         completion: @escaping @Sendable (ActionCompletionStatus) -> Void
     ) -> ActionSubmission {
-        guard let targetURL = targetURLs.first else {
+        let openingURLs = urlsToOpen(for: targetURLs)
+        guard !openingURLs.isEmpty else {
             completion(.failed)
             return .rejected
         }
         
-        // 确定需要打开的文件夹路径
-        let pathURL = getDirectoryURL(for: targetURL)
-        
-        // VS Code、Cursor、Sublime、Warp、Terminal 和 iTerm2 均通过 NSWorkspace 传递目录 URL 打开。
-        // 该方式避免额外的 AppleScript 自动化权限请求。
+        // 编辑器接收原始选中项；终端接收工作目录。通过文件 URL 传递，避免 shell 转义和参数解析。
         guard let appURL = InstalledAppRegistry.shared.url(for: appType.bundleIdentifier) else {
             AppLog.error("找不到应用: \(self.appType.displayName)", category: .action)
             completion(.failed)
@@ -102,12 +107,14 @@ public final class TerminalOpenAction: MenuAction, @unchecked Sendable {
         }
         
         let configuration = NSWorkspace.OpenConfiguration()
-        configuration.arguments = [pathURL.path]
+        if appType == .terminal || appType == .iterm2 || appType == .warp {
+            configuration.arguments = openingURLs.map(\.path)
+        }
         
         
         // 异步拉起目标应用，避免 DispatchGroup.wait() 阻塞调用线程（尤其是主线程）导致 UI 卡死。
         // NSWorkspace.open 回调在后台队列执行，HUD 展示内部已切换到主线程。
-        NSWorkspace.shared.open([pathURL], withApplicationAt: appURL, configuration: configuration) { _, error in
+        NSWorkspace.shared.open(openingURLs, withApplicationAt: appURL, configuration: configuration) { _, error in
             if let error = error {
                 print("[TerminalAction] 拉起 \(self.appType.displayName) 失败: \(error.localizedDescription)")
                 SharedHUDManager.show(
@@ -119,7 +126,7 @@ public final class TerminalOpenAction: MenuAction, @unchecked Sendable {
             } else {
                 SharedHUDManager.show(
                     title: "拉起成功",
-                    content: "已在 \(self.appType.displayName) 中打开目录",
+                    content: "已在 \(self.appType.displayName) 中打开所选项目",
                     isSuccess: true
                 )
                 completion(.succeeded)
@@ -131,6 +138,49 @@ public final class TerminalOpenAction: MenuAction, @unchecked Sendable {
         return .accepted
     }
     
+    func urlsToOpen(for targetURLs: [URL]) -> [URL] {
+        switch appType {
+        case .sublime, .vscode, .cursor:
+            return targetURLs
+        case .terminal, .iterm2, .warp:
+            return targetURLs.first.map { [getDirectoryURL(for: $0)] } ?? []
+        case .codex:
+            guard targetURLs.count == 1, let directory = targetURLs.first, directory.isFileURL,
+                  (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                return []
+            }
+            // Codex 的新聊天入口通过 path 选择本地项目；不传 prompt，不自动发送任务。
+            var components = URLComponents()
+            components.scheme = "codex"
+            components.host = "new"
+            components.queryItems = [
+                URLQueryItem(name: "path", value: directory.path),
+                URLQueryItem(name: "mode", value: "codex")
+            ]
+            components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+            return components.url.map { [$0] } ?? []
+        case .workbuddy:
+            guard targetURLs.count == 1, let directory = targetURLs.first, directory.isFileURL,
+                  (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                return []
+            }
+            // WorkBuddy 5.9.2 的文件打开入口只唤起窗口；任务链接才能预选工作目录。
+            // 空文本块保留空白输入框，由用户填写并发送任务，不修改权限模式。
+            var components = URLComponents()
+            components.scheme = "workbuddy"
+            components.host = "task"
+            components.queryItems = [
+                URLQueryItem(name: "action", value: "start"),
+                URLQueryItem(name: "cwd", value: directory.path),
+                URLQueryItem(name: "promptContentBlocks", value: "[{\"type\":\"text\",\"text\":\"\"}]"),
+                URLQueryItem(name: "promptAnimation", value: "none")
+            ]
+            // Electron 使用 URLSearchParams，字面量 + 必须编码，避免被当成空格。
+            components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+            return components.url.map { [$0] } ?? []
+        }
+    }
+
     private func getDirectoryURL(for url: URL) -> URL {
         var isDir: ObjCBool = false
         if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue {

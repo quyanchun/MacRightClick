@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 /// 为 iCloud Drive 等 File Provider 目录提供 FinderSync 之外的系统服务入口。
-/// 面板仅展示核心层解析结果，真实执行仍通过共享事务队列进入 ActionDispatcher。
+/// 面板仅展示核心层解析结果，用户确认后在宿主进程内提交给 ActionDispatcher。
 final class FinderServicesProvider: NSObject {
     static let shared = FinderServicesProvider()
 
@@ -10,9 +10,6 @@ final class FinderServicesProvider: NSObject {
     private static let fileURLType = NSPasteboard.PasteboardType("public.file-url")
     private static let forwardedActionType = NSPasteboard.PasteboardType(
         FinderQuickServiceProtocol.forwardedActionPasteboardType
-    )
-    private static let actionSignal = Notification.Name(
-        "guyue.RightClickAssistant.triggerActionSignal"
     )
 
     @MainActor
@@ -50,6 +47,14 @@ final class FinderServicesProvider: NSObject {
         }
 
         if case let .directAction(actionID) = request {
+            // Services can be invoked by any app. Require an explicit user gesture here.
+            let alert = NSAlert()
+            alert.messageText = "执行右键助手动作？"
+            let title = ActionDispatcher.shared.action(forId: actionID)?.localizedTitle ?? actionID
+            alert.informativeText = title + "\n" + paths.joined(separator: "\n")
+            alert.addButton(withTitle: "取消")
+            alert.addButton(withTitle: "执行")
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
             if let error = submissionError(actionID: actionID, paths: paths) {
                 errorPointer.pointee = error as NSString
             } else {
@@ -110,24 +115,13 @@ final class FinderServicesProvider: NSObject {
             return "动作已关闭、目标已变化或当前不可用"
         }
 
-        do {
-            try SharedStorageManager.shared.enqueueAction(
-                actionId: actionID,
-                paths: paths,
-                invocationKind: .items
-            )
-            DistributedNotificationCenter.default().postNotificationName(
-                Self.actionSignal,
-                object: nil,
-                userInfo: nil,
-                deliverImmediately: true
-            )
-            AppLog.info("Finder 服务动作已入队：\(actionID)", category: .host)
-            return nil
-        } catch {
-            AppLog.error("Finder 服务入队失败：\(error.localizedDescription)", category: .storage)
-            return "无法提交操作：\(error.localizedDescription)"
-        }
+        let submission = ActionDispatcher.shared.submit(
+            actionId: actionID,
+            targetURLs: targetURLs,
+            invocationKind: .items,
+            completion: { _ in }
+        )
+        return submission == .accepted ? nil : "无法提交操作"
     }
 
     private func showFailure(_ message: String) {

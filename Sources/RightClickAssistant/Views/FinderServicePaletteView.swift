@@ -74,9 +74,13 @@ struct FinderServicePaletteView: View {
             onSelect(item.actionID)
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: item.iconName ?? "gearshape")
-                    .foregroundStyle(item.isHighRisk ? Color.orange : Color.accentColor)
-                    .frame(width: 20, height: 20)
+                Group {
+                    if let action = ActionDispatcher.shared.action(forId: item.actionID) {
+                        Image(nsImage: ActionIcon.image(for: action)).resizable()
+                    } else {
+                        Image(systemName: item.iconName ?? "gearshape")
+                    }
+                }.frame(width: 20, height: 20)
 
                 Text(item.title)
                     .foregroundStyle(.primary)

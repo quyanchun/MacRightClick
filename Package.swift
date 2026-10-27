@@ -22,6 +22,7 @@ let package = Package(
             dependencies: ["RightClickAssistantCore"],
             path: "Tests",
             exclude: [
+                "Standalone",
                 "CaskStructureTests.sh",
                 "ReleaseWorkflowStructureTests.sh"
             ]

@@ -141,6 +141,7 @@ struct AdvancedSettingsView: View {
             "enable_success_hud",
             SharedStorageManager.Keys.enableDebugLogging,
             SharedStorageManager.Keys.menuLayoutMode,
+            SharedStorageManager.Keys.menuConfiguration,
             SharedStorageManager.Keys.watchScope,
             LaunchPresentationPolicy.silentLaunchKey
         ]

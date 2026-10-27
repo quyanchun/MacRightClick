@@ -68,33 +68,14 @@ class FinderSync: FIFinderSync {
         
         logToSharedContainer("[FinderSync] [actionMenuItemSelected] 解析动作成功: \(actionId), 目标路径总数: \(targets.count)", level: .debug)
         
-        // 1. 写入中介共享动作队列文件
-        let paths = targets.map { $0.path }
-
-        do {
-            let eventURL = try SharedStorageManager.shared.enqueueAction(
-                actionId: actionId,
-                paths: paths,
-                invocationKind: selection.invocationKind
-            )
-            logToSharedContainer("[FinderSync] [actionMenuItemSelected] 成功向中介队列写入动作参数: \(eventURL.lastPathComponent)", level: .debug)
-        } catch {
-            logToSharedContainer("[FinderSync] [actionMenuItemSelected] 错误: 写入共享动作队列失败: \(error.localizedDescription)")
-            return
-        }
-        
-        // 2. 发送分布式空信号，通知宿主消费队列。
-        DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name("guyue.RightClickAssistant.triggerActionSignal"),
-            object: nil,
-            userInfo: nil,
-            deliverImmediately: true
-        )
-        
-        logToSharedContainer("[FinderSync] [actionMenuItemSelected] 已发出动作触发信号", level: .debug)
-        
-        // 3. 仅在宿主 App 未运行时才拉起；已运行时 DistributedNotification 已足够唤醒消费队列。
         Self.ensureHostRunning()
+        AuthenticatedActionClient.send(
+            actionId: actionId,
+            paths: targets.map(\.path),
+            invocationKind: selection.invocationKind
+        ) { success in
+            if !success { AppLog.error("动作未执行，请重新打开右键助手后重试", category: .ext) }
+        }
     }
     
     override init() {
@@ -308,6 +289,7 @@ class FinderSync: FIFinderSync {
         let sections = FinderMenuLayoutBuilder.build(
             actions: dispatcher.allActions,
             mode: cache.menuLayoutMode,
+            configuration: cache.menuConfiguration,
             isEnabled: { action in
                 cache.isEnabled(action.actionId, default: action.isEnabledByDefault)
             },
@@ -335,19 +317,19 @@ class FinderSync: FIFinderSync {
 
     private func makeMenuItem(
         for action: MenuAction,
-        invocationKind: ActionInvocationKind
+        invocationKind: ActionInvocationKind,
+        inSubmenu: Bool = true
     ) -> NSMenuItem {
         let item = NSMenuItem(
-            title: action.localizedTitle,
+            title: inSubmenu ? ((action as? NewFileAction).map { "未命名.\($0.fileType.extensionName)" } ?? action.localizedTitle) : action.localizedTitle,
             action: #selector(actionMenuItemSelected(_:)),
             keyEquivalent: ""
         )
         item.tag = FinderSync.getTag(for: action.actionId, invocationKind: invocationKind)
         item.target = self
 
-        if let iconName = action.iconName {
-            item.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
-        }
+        item.image = ActionIcon.image(for: action).copy() as? NSImage
+        item.image?.size = NSSize(width: 16, height: 16)
 
         return item
     }
@@ -363,7 +345,7 @@ class FinderSync: FIFinderSync {
             case .directItems(let actionIds):
                 for actionId in actionIds {
                     guard let action = dispatcher.action(forId: actionId) else { continue }
-                    menu.addItem(makeMenuItem(for: action, invocationKind: invocationKind))
+                    menu.addItem(makeMenuItem(for: action, invocationKind: invocationKind, inSubmenu: false))
                     logToSharedContainer("[FinderSync] 成功添加一级菜单项: [\(action.localizedTitle)]", level: .debug)
                 }
             case .submenu(let title, let actionIds):
@@ -376,6 +358,8 @@ class FinderSync: FIFinderSync {
                 }
                 if !submenu.items.isEmpty {
                     parent.submenu = submenu
+                    parent.image = ActionIcon.groupImage(title: title).copy() as? NSImage
+                    parent.image?.size = NSSize(width: 16, height: 16)
                     menu.addItem(parent)
                 }
             case .separator:

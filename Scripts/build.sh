@@ -221,6 +221,12 @@ if [ -d "Resources/Templates" ]; then
     echo "📄 [Build] 已拷贝 Office 模板到 .app/Contents/Resources/Templates/"
 fi
 
+# 彩色功能图标同时提供给宿主与 Finder 扩展。
+for bundle in "$APP_BUNDLE" "$EXT_BUNDLE"; do
+    mkdir -p "$bundle/Contents/Resources/ActionIcons"
+    cp Resources/ActionIcons/*.png "$bundle/Contents/Resources/ActionIcons/"
+done
+
 # 5. 源码列表定义
 HOST_SOURCES="
     Sources/RightClickAssistant/AppDelegate.swift \
@@ -229,18 +235,23 @@ HOST_SOURCES="
     Sources/RightClickAssistant/Views/ContentView.swift \
     Sources/RightClickAssistant/Views/GeneralSettingsView.swift \
     Sources/RightClickAssistant/Views/ActionsSettingsView.swift \
+    Sources/RightClickAssistant/Views/MenuEditorView.swift \
     Sources/RightClickAssistant/Views/FinderSettingsView.swift \
     Sources/RightClickAssistant/Views/DiagnosticsSettingsView.swift \
     Sources/RightClickAssistant/Views/AdvancedSettingsView.swift \
     Sources/RightClickAssistant/Views/SettingsComponents.swift \
     Sources/RightClickAssistant/Views/FinderServicePaletteView.swift \
     Sources/RightClickAssistant/Core/MenuAction.swift \
+    Sources/RightClickAssistant/Core/ActionIcon.swift \
     Sources/RightClickAssistant/Core/ActionProfile.swift \
     Sources/RightClickAssistant/Core/DefaultActionRegistry.swift \
     Sources/RightClickAssistant/Core/MenuLayout.swift \
+    Sources/RightClickAssistant/Core/MenuConfiguration.swift \
     Sources/RightClickAssistant/Core/SharedStorageManager.swift \
     Sources/RightClickAssistant/Core/SharedFolderMonitor.swift \
     Sources/RightClickAssistant/Core/ActionDispatcher.swift \
+    Sources/RightClickAssistant/Core/AuthenticatedActions.swift \
+    Sources/RightClickAssistant/Core/FilePublication.swift \
     Sources/RightClickAssistant/Core/SharedHUDManager.swift \
     Sources/RightClickAssistant/Core/FullDiskAccessChecker.swift \
     Sources/RightClickAssistant/Core/LaunchServiceManager.swift \
@@ -275,11 +286,15 @@ HOST_SOURCES="
 EXT_SOURCES="
     Sources/RightClickAssistantExtension/FinderSync.swift \
     Sources/RightClickAssistant/Core/MenuAction.swift \
+    Sources/RightClickAssistant/Core/ActionIcon.swift \
     Sources/RightClickAssistant/Core/ActionProfile.swift \
     Sources/RightClickAssistant/Core/DefaultActionRegistry.swift \
     Sources/RightClickAssistant/Core/MenuLayout.swift \
+    Sources/RightClickAssistant/Core/MenuConfiguration.swift \
     Sources/RightClickAssistant/Core/SharedStorageManager.swift \
     Sources/RightClickAssistant/Core/ActionDispatcher.swift \
+    Sources/RightClickAssistant/Core/AuthenticatedActions.swift \
+    Sources/RightClickAssistant/Core/FilePublication.swift \
     Sources/RightClickAssistant/Core/SharedHUDManager.swift \
     Sources/RightClickAssistant/Core/FullDiskAccessChecker.swift \
     Sources/RightClickAssistant/Core/LaunchPresentationPolicy.swift \

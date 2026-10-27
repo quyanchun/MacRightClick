@@ -17,7 +17,7 @@ public enum DefaultActionRegistry {
             PathCopyAction(kind: .shellEscaped),
             PathCopyAction(kind: .gitRelative)
         ]
-        let terminalActions: [MenuAction] = TerminalEditorType.allCases.map {
+        let terminalActions: [MenuAction] = TerminalEditorType.allCases.filter { $0 != .cursor }.map {
             TerminalOpenAction(type: $0)
         }
         let utilityActions: [MenuAction] = [

@@ -101,6 +101,7 @@ public final class SharedStorageManager: @unchecked Sendable {
         public static let enableDebugLogging = "enable_debug_logging"
         public static let favoriteActionIds = "favorite_action_ids"
         public static let watchedDirectoryPaths = "watched_directory_paths"
+        public static let menuConfiguration = "custom_menu_configuration_v1"
         public static let menuLayoutMode = "menu_layout_mode"
         public static let actionProfile = "action_profile"
         public static let actionProfileMigrationV1 = "action_profile_migration_v1"
@@ -799,6 +800,19 @@ public final class SharedStorageManager: @unchecked Sendable {
     /// 按动作自身默认值和共享配置判断是否启用，供 Finder 菜单与托盘菜单共用。
     public func isActionEnabled(_ action: MenuAction) -> Bool {
         return getBool(forKey: "enable_action_\(action.actionId)", defaultValue: action.isEnabledByDefault)
+    }
+
+    public var menuConfiguration: MenuConfiguration? {
+        guard let json = getStringArray(forKey: Keys.menuConfiguration).first,
+              let data = json.data(using: .utf8), data.count <= 1_048_576 else { return nil }
+        return try? JSONDecoder().decode(MenuConfiguration.self, from: data)
+    }
+
+    @discardableResult
+    public func setMenuConfiguration(_ configuration: MenuConfiguration) -> Bool {
+        guard let data = try? JSONEncoder().encode(configuration),
+              let json = String(data: data, encoding: .utf8) else { return false }
+        return setStringArray([json], forKey: Keys.menuConfiguration)
     }
 
     public var favoriteActionIds: [String] {

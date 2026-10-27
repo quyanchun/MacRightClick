@@ -216,9 +216,9 @@ public final class FileManageAction: MenuAction, @unchecked Sendable {
     
     public func isAvailable(for targetURLs: [URL], isContainer: Bool) -> Bool {
         if isContainer {
-            // 右键空白背景 (Container) 时：只有“粘贴”操作可能可用（前提是剪切板内有被剪切的文件）
-            // 此时 cut, permanentDelete, copyPath, copyName, moveTo, copyTo 等针对特定选中项目的动作全部隐藏
-            return manageType == .paste && !FileCutClipboard.shared.cutURLs.isEmpty
+            // 空白处的目标是当前目录，可以拷贝目录路径；破坏性操作仍需选中项目。
+            guard !targetURLs.isEmpty else { return false }
+            return manageType == .copyPath || (manageType == .paste && !FileCutClipboard.shared.cutURLs.isEmpty)
         } else {
             // 正常选中项目 (Items) 时：
             switch manageType {
@@ -652,7 +652,7 @@ extension FileManageAction {
 // MARK: - 跨卷移动事务化
 public extension FileManageAction {
     /// 跨卷 Copy-Then-Delete 的事务化封装。
-    /// - 任一步骤失败立即 cleanup 残留 dest，不再让用户看到「半个文件 + 完整原件」
+    /// - 仅清理本次创建的临时目录；发布失败保留源文件，删除源失败保留完整目标。
     /// - 成功返回 true；失败返回 false 并在 AppLog 留痕
     static func crossVolumeMove(from src: URL, to dest: URL) -> Bool {
         return crossVolumeMove(
@@ -670,15 +670,32 @@ public extension FileManageAction {
         copy: (URL, URL) throws -> Void,
         sanityCheck: (URL) throws -> Void
     ) -> Bool {
+        let manager = FileManager.default
+        // Stage on the destination volume. Never clean up a path supplied by the caller.
+        let stagingDirectory = dest.deletingLastPathComponent()
+            .appendingPathComponent(".rightclick-move-\(UUID().uuidString)", isDirectory: true)
+        let stagedFile = stagingDirectory.appendingPathComponent(src.lastPathComponent)
         do {
-            try copy(src, dest)
-            try sanityCheck(dest)
-            try FileManager.default.removeItem(at: src)
+            try manager.createDirectory(at: stagingDirectory, withIntermediateDirectories: false)
+        } catch {
+            return false
+        }
+        defer { try? manager.removeItem(at: stagingDirectory) }
+        do {
+            try copy(src, stagedFile)
+            try sanityCheck(stagedFile)
+            // Exclusive rename refuses an existing destination, including a racing writer.
+            try FilePublication.publish(stagedFile, to: dest)
+        } catch {
+            AppLog.error("跨卷复制或发布失败，源文件和已有目标均保留: \(error.localizedDescription)", category: .action)
+            return false
+        }
+        do {
+            try manager.removeItem(at: src)
             return true
         } catch {
-            // 关键：cleanup 残留 dest，避免「目标半个 + 源完整」并存
-            try? FileManager.default.removeItem(at: dest)
-            AppLog.error("跨卷移动失败已 cleanup: \(src.path) -> \(error.localizedDescription)", category: .action)
+            // Removal can partially fail for a directory; retain the complete destination.
+            AppLog.error("目标已复制，源文件删除失败；保留目标副本: \(error.localizedDescription)", category: .action)
             return false
         }
     }
@@ -690,8 +707,8 @@ public extension FileManageAction {
         }
         if !isDir.boolValue {
             let attrs = try FileManager.default.attributesOfItem(atPath: dest.path)
-            if let size = attrs[.size] as? Int, size <= 0 {
-                throw NSError(domain: "guyue.FileManage", code: 511, userInfo: [NSLocalizedDescriptionKey: "目标文件 size 为 0"])
+            if let size = attrs[.size] as? Int, size < 0 {
+                throw NSError(domain: "guyue.FileManage", code: 511, userInfo: [NSLocalizedDescriptionKey: "目标文件大小无效"])
             }
         }
     }

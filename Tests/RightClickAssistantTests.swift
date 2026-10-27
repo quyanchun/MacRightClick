@@ -42,10 +42,10 @@ final class RightClickAssistantTests: XCTestCase {
         XCTAssertEqual(retrieved?.category, .newFile)
     }
 
-    func testDefaultRegistryHasUniqueThirtyActionIDs() {
+    func testDefaultRegistryHasUniqueThirtyTwoActionIDs() {
         let actions = DefaultActionRegistry.makeActions()
 
-        XCTAssertEqual(actions.count, 30)
+        XCTAssertEqual(actions.count, 32)
         XCTAssertEqual(Set(actions.map(\.actionId)).count, actions.count)
     }
 
@@ -257,7 +257,8 @@ final class RightClickAssistantTests: XCTestCase {
     
     /// 3. 测试新建高级文档（如 Office 三件套）时的数据流完整性
     func testOfficeFileTemplateBytes() {
-        let action = NewFileAction(fileType: .docx)
+        let template = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/Templates/blank.docx")
+        let action = NewFileAction(fileType: .docx, customTemplateURL: template)
         
         let success = action.execute(targetURLs: [tempDirectory])
         XCTAssertTrue(success)
@@ -386,7 +387,7 @@ final class RightClickAssistantTests: XCTestCase {
         XCTAssertTrue(FileManageAction(type: .copyPath).isEnabledByDefault)
         XCTAssertTrue(TerminalOpenAction(type: .terminal).isEnabledByDefault)
 
-        XCTAssertFalse(NewFileAction(fileType: .xlsx).isEnabledByDefault)
+        XCTAssertTrue(NewFileAction(fileType: .xlsx).isEnabledByDefault)
         XCTAssertFalse(TerminalOpenAction(type: .warp).isEnabledByDefault)
         XCTAssertFalse(UtilityAction(type: .convertToJPEG).isEnabledByDefault)
     }
@@ -560,8 +561,8 @@ final class RightClickAssistantTests: XCTestCase {
         XCTAssertEqual(storage.menuLayoutMode, .flat)
     }
 
-    /// 20. Flat 模式下收藏动作置顶且连续排列，收藏不应在普通区重复出现
-    func testFlatMenuLayoutPlacesFavoritesFirstWithoutDuplicates() {
+    /// 20. 实用工具在 Flat 模式下仍使用子菜单，收藏在子菜单内置顶且不重复
+    func testFlatMenuLayoutKeepsUtilityFavoritesInsideSubmenu() {
         let favorite = TestMenuAction(id: "favorite", title: "A Favorite", category: .utility)
         let regularNewFile = TestMenuAction(id: "regular.new", title: "B New", category: .newFile)
         let regularUtility = TestMenuAction(id: "regular.utility", title: "C Utility", category: .utility)
@@ -575,7 +576,8 @@ final class RightClickAssistantTests: XCTestCase {
         )
 
         XCTAssertEqual(sections, [
-            .directItems(actionIds: [favorite.actionId, regularNewFile.actionId, regularUtility.actionId])
+            .submenu(title: "新建文件", actionIds: [regularNewFile.actionId]),
+            .submenu(title: "实用工具", actionIds: [favorite.actionId, regularUtility.actionId])
         ])
     }
 
@@ -613,7 +615,7 @@ final class RightClickAssistantTests: XCTestCase {
         )
 
         XCTAssertEqual(sections, [
-            .directItems(actionIds: [visible.actionId])
+            .submenu(title: "新建文件", actionIds: [visible.actionId])
         ])
     }
 

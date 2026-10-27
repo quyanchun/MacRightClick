@@ -1,9 +1,13 @@
 import Foundation
 import AppKit
+import Darwin
 
 /// 新建文件类型枚举
 public enum SupportedFileType: String, CaseIterable, Codable, Identifiable {
     case txt = "txt"
+    case pages = "pages"
+    case key = "key"
+    case numbers = "numbers"
     case md = "md"
     case json = "json"
     case csv = "csv"
@@ -22,6 +26,9 @@ public enum SupportedFileType: String, CaseIterable, Codable, Identifiable {
     public var displayName: String {
         switch self {
         case .txt: return "文本文件 (.txt)"
+        case .pages: return "Pages 文稿 (.pages)"
+        case .key: return "Keynote 演示文稿 (.key)"
+        case .numbers: return "Numbers 表格 (.numbers)"
         case .md: return "Markdown 文档 (.md)"
         case .json: return "JSON 配置文件 (.json)"
         case .csv: return "CSV 表格 (.csv)"
@@ -34,20 +41,20 @@ public enum SupportedFileType: String, CaseIterable, Codable, Identifiable {
     }
     
     /// 获取每种类型的空白默认字节，确保 Office 等软件能够正常打开而非提示损坏
-    public var defaultEmptyBytes: Data {
+    public func contents(templateDirectory: URL? = nil) throws -> Data {
         switch self {
         // Office 三件套需要完整的最小骨架（[Content_Types].xml + _rels + 主体 part），
         // 否则 Word/Excel/PowerPoint/Pages 双击会提示「文件已损坏」。
         // 实际骨架以二进制方式打包到 .app/Contents/Resources/Templates/blank.<ext>，运行时读取。
-        case .docx, .xlsx, .pptx:
-            if let url = Bundle.main.url(forResource: "blank", withExtension: rawValue, subdirectory: "Templates"),
-               let data = try? Data(contentsOf: url) {
-                return data
+        case .docx, .xlsx, .pptx, .pages, .key, .numbers:
+            let url = templateDirectory?.appendingPathComponent("blank.\(rawValue)")
+                ?? Bundle.main.url(forResource: "blank", withExtension: rawValue, subdirectory: "Templates")
+            guard let url else { throw CocoaError(.fileReadNoSuchFile) }
+            let data = try Data(contentsOf: url)
+            guard data.count > 100, data.starts(with: [0x50, 0x4b]) else {
+                throw CocoaError(.fileReadCorruptFile)
             }
-            // 兜底：即使没拿到模板也不返回完全空字节，至少给出 PK 头让 Finder 不报「未知二进制」。
-            // 但应用打开会报错。这条分支表示打包流程出错，AppLog 留痕方便排查。
-            AppLog.error("缺少 Templates/blank.\(rawValue)，回退空 ZIP 头", category: .action)
-            return Data(base64Encoded: "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==") ?? Data()
+            return data
         case .html:
             return """
             <!doctype html>
@@ -105,9 +112,9 @@ public final class NewFileAction: MenuAction {
 
     public var tier: ActionTier {
         switch fileType {
-        case .txt, .md, .pdf:
+        case .txt, .md, .pdf, .pages, .key, .numbers, .docx, .xlsx, .pptx:
             return .essential
-        case .json, .csv, .html, .docx, .xlsx, .pptx:
+        case .json, .csv, .html:
             return .professional
         }
     }
@@ -124,6 +131,9 @@ public final class NewFileAction: MenuAction {
         
         switch fileType {
         case .txt: self.iconName = "doc.text"
+        case .pages: self.iconName = "doc.richtext"
+        case .key: self.iconName = "play.rectangle"
+        case .numbers: self.iconName = "tablecells.fill"
         case .md: self.iconName = "doc.text.fill"
         case .json: self.iconName = "curlybraces"
         case .csv: self.iconName = "tablecells"
@@ -135,6 +145,32 @@ public final class NewFileAction: MenuAction {
         }
     }
     
+    /// Publish with exclusive rename so concurrent creates and dangling links cannot be overwritten.
+    public func createFile(in directory: URL, templateDirectory: URL? = nil) throws -> URL {
+        let data: Data
+        if let customTemplateURL {
+            data = try Data(contentsOf: customTemplateURL)
+        } else {
+            data = try fileType.contents(templateDirectory: templateDirectory)
+        }
+        let stagingDirectory = directory.appendingPathComponent(".rightclick-new-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: stagingDirectory) }
+        let staged = stagingDirectory.appendingPathComponent("document")
+        try data.write(to: staged)
+        var counter = 0
+        while true {
+            let name = counter == 0 ? "未命名" : "未命名 \(counter)"
+            let destination = directory.appendingPathComponent("\(name).\(fileType.extensionName)")
+            do {
+                try FilePublication.publish(staged, to: destination)
+                return destination
+            } catch let error as NSError where error.domain == NSPOSIXErrorDomain && error.code == Int(EEXIST) {
+                counter += 1
+            }
+        }
+    }
+
     public func execute(targetURLs: [URL]) -> Bool {
         guard let targetURL = targetURLs.first else {
             print("[NewFileAction] 错误: 没有选中目标目录或路径")
@@ -150,33 +186,8 @@ public final class NewFileAction: MenuAction {
             destinationDir = targetURL.deletingLastPathComponent()
         }
         
-        // 2. 确定新建文件的基础名称，并处理重名冲突。
-        let baseName = "未命名"
-        let ext = fileType.extensionName
-        var finalURL = destinationDir.appendingPathComponent("\(baseName).\(ext)")
-        
-        var counter = 1
-        while FileManager.default.fileExists(atPath: finalURL.path) {
-            finalURL = destinationDir.appendingPathComponent("\(baseName) \(counter).\(ext)")
-            counter += 1
-        }
-        
-        // 3. 准备写入的内容 (如果有自定义模板优先使用，否则使用预置空白字节数据)
-        let fileData: Data
-        if let templateURL = customTemplateURL, FileManager.default.fileExists(atPath: templateURL.path) {
-            do {
-                fileData = try Data(contentsOf: templateURL)
-            } catch {
-                print("[NewFileAction] 读取自定义模板失败，使用默认空白数据: \(error.localizedDescription)")
-                fileData = fileType.defaultEmptyBytes
-            }
-        } else {
-            fileData = fileType.defaultEmptyBytes
-        }
-        
-        // 4. 创建文件并写入
         do {
-            try fileData.write(to: finalURL, options: .atomic)
+            let finalURL = try createFile(in: destinationDir)
             print("[NewFileAction] 文件创建成功: \(finalURL.path)")
             
             SharedHUDManager.show(
@@ -194,7 +205,7 @@ public final class NewFileAction: MenuAction {
             print("[NewFileAction] 创建文件失败: \(error.localizedDescription)")
             SharedHUDManager.show(
                 title: "新建失败",
-                content: "请检查该目录写入权限",
+                content: error.localizedDescription,
                 isSuccess: false
             )
             return false

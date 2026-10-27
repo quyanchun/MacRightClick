@@ -17,6 +17,7 @@ public final class ActionConfigCache: @unchecked Sendable {
     private let storage: SharedStorageManager
     private var enableMap: [String: Bool] = [:]
     private var favoriteSet: Set<String> = []
+    private var cachedMenuConfiguration: MenuConfiguration?
     private var cachedMenuLayoutMode: MenuLayoutMode = .flat
     private var configChangedObserver: NSObjectProtocol?
 
@@ -43,6 +44,7 @@ public final class ActionConfigCache: @unchecked Sendable {
             self.enableMap.removeAll(keepingCapacity: true)
             self.favoriteSet = Set(storage.favoriteActionIds)
             self.cachedMenuLayoutMode = storage.menuLayoutMode
+            self.cachedMenuConfiguration = storage.menuConfiguration
         }
     }
 
@@ -52,6 +54,7 @@ public final class ActionConfigCache: @unchecked Sendable {
             self.enableMap.removeAll(keepingCapacity: true)
             self.favoriteSet = Set(storage.favoriteActionIds)
             self.cachedMenuLayoutMode = storage.menuLayoutMode
+            self.cachedMenuConfiguration = storage.menuConfiguration
         }
     }
 
@@ -71,6 +74,8 @@ public final class ActionConfigCache: @unchecked Sendable {
     public func isFavorite(_ actionId: String) -> Bool {
         return queue.sync { favoriteSet.contains(actionId) }
     }
+
+    public var menuConfiguration: MenuConfiguration? { queue.sync { cachedMenuConfiguration } }
 
     public var menuLayoutMode: MenuLayoutMode {
         return queue.sync { cachedMenuLayoutMode }

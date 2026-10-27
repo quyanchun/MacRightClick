@@ -81,7 +81,8 @@ public final class InstalledAppRegistry: @unchecked Sendable {
         let resolver = queue.sync { resolverOverride } ?? { id in
             NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
         }
-        let resolved = resolver(bundleId)
+        // Sublime Text 4 使用独立标识；同时保留旧版兼容。
+        let resolved = Self.bundleIdentifiers(for: bundleId).lazy.compactMap(resolver).first
         queue.async(flags: .barrier) {
             self.cache[bundleId] = Entry(url: resolved, resolvedAt: Date())
         }
@@ -99,9 +100,21 @@ public final class InstalledAppRegistry: @unchecked Sendable {
         }
     }
 
+    private static func bundleIdentifiers(for bundleId: String) -> [String] {
+        switch bundleId {
+        case "com.sublimetext.4": return [bundleId, "com.sublimetext.3"]
+        case "com.sublimetext.3": return [bundleId, "com.sublimetext.4"]
+        default: return [bundleId]
+        }
+    }
+
     public func invalidate(bundleId: String) {
         queue.async(flags: .barrier) {
-            guard self.cache.removeValue(forKey: bundleId) != nil else { return }
+            var removed = false
+            for identifier in Self.bundleIdentifiers(for: bundleId) {
+                if self.cache.removeValue(forKey: identifier) != nil { removed = true }
+            }
+            guard removed else { return }
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
                     name: Self.availabilityChangedNotification,
