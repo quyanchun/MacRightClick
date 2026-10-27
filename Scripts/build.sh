@@ -487,6 +487,7 @@ device=$(hdiutil attach -nobrowse -readwrite "$RAW_DMG" | egrep '/Volumes/' | aw
 sleep 1.5
 
 # 使用 AppleScript 让 Finder 调整该虚拟盘的布局元数据。添加 Headless 降级保护
+if [ "${SKIP_DMG_LAYOUT:-0}" != "1" ]; then
 osascript <<EOF || echo "⚠️ [Build] 提示: 当前处于 headless 无显示环境，已安全跳过 Finder UI 窗口排版，默认继承系统基础布局。"
 tell application "Finder"
     tell disk "RightClickAssistant"
@@ -510,6 +511,7 @@ tell application "Finder"
     end tell
 end tell
 EOF
+fi
 
 sleep 1
 hdiutil detach "$device" >/dev/null || true
